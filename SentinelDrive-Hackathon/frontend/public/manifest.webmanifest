@@ -1,0 +1,22 @@
+{
+  "name": "SentinelDrive",
+  "short_name": "SentinelDrive",
+  "description": "Pothole reporting, repair work orders, driver alertness and crash detection.",
+  "id": "/",
+  "start_url": "/#/overview",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#22282b",
+  "theme_color": "#22282b",
+  "categories": ["navigation", "utilities"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Report a pothole", "url": "/#/defects", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Driver monitor", "url": "/#/driver", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}
