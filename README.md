@@ -1,4 +1,4 @@
-# SentinelDrive (Hackathon edition)
+# SentinelDrive
 
 Installable app with English, Tamil and Hindi.
 
@@ -6,9 +6,7 @@ Road safety operations for Indian cities, in one web app:
 
 - **Pothole reporting to repair.** Upload a road photo or dashcam clip. A fine-tuned YOLOv8 model finds every pothole, estimates its size, and prices the repair from an editable INR rate card with GST. Each site gets an address from OpenStreetMap, a priority score, a status workflow (reported → verified → scheduled → repaired) and a printable PDF work order with the photo evidence.
 - **Driver alertness.** The browser camera tracks the driver’s eyes and head (MediaPipe, on the device; video never leaves it). Thresholds are calibrated to each driver. When drowsy, the driver gets a spoken question and answers by voice; no answer sounds an alarm.
-- **Crash detection.** A phone on the dashboard watches for impacts and confirms them with GPS speed and the impact sound before anything is escalated. The driver gets 20 seconds to tap “I’m OK”, then one-tap buttons to call 112 or text a contact their location.
-- **Emergency vehicles.** The microphone recognises wail, yelp and hi-lo sirens and tells the driver to give way.
-
+  
 No numbers in the app are made up. If a sensor is off, the screen says so.
 
 ---
@@ -26,16 +24,15 @@ Run `npm test` in `frontend/` to check that no sentence is missing in any langua
 
 - **One case, many citizens.** Reports within `SENTINEL_DEDUP_RADIUS_M` of an open site are merged into that site. Each browser gets a random id, so the same person reporting twice counts once. The site shows "Citizens" next to the total reports.
 - **Priority 0-100 with reasons.** Weights: citizens 30, safety 30, size 15, time unresolved 10 (road importance has no data yet, so the rest is rescaled). The citizen part is logarithmic and capped at 15 citizens. The drawer shows each factor's points.
-- **My reports** page: read-only list of what this browser reported, with progress and before/after photos. There is no sign-in yet, so it is tied to the browser, not a person.
+- **My reports** page: read-only list of what this browser reported, with progress and before/after photos.
 - **Repair needs a photo.** "Mark repaired" asks for an after-repair photo (and optional actual cost). The citizen's original photos are kept. Before/after is shown side by side.
 - **Stricter detection.** `SENTINEL_MIN_CONFIDENCE` now defaults to 0.50 (was 0.30) because low-confidence boxes on snow and shadows were reported as potholes. Lower it if real potholes are missed.
 
-Not built: logins and roles, a separate municipality area, a verifier step, notifications, analytics page. Anyone with the link can change a site's status.
 
 ## Two apps, one home page
 
 Opening the site shows a home page with two doors:
-- **Citizen app:** sign in with a name plus phone or email, or continue as a guest. This is a demo sign-in: no password or code is checked, so anyone who knows your details could open your report list. The same details show the same "My reports" on any device. Real use needs a one-time code by SMS or email.
+- **Citizen app:** sign in with a name plus phone or email, or continue as a guest. The same details show the same "My reports" on any device. 
 - **Municipal dashboard:** staff sign-in at `/#/municipality` (see below). There is no staff link inside the citizen app.
 
 Both apps run from one server and share one database, so a citizen report appears in the staff queue at once.
