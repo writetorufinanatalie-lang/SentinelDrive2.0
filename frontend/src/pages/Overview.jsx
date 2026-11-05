@@ -4,11 +4,10 @@ import { useLive } from '../hooks/useLive'
 import MapView from '../components/MapView'
 import { DailyBars } from '../components/Charts'
 import { Empty, Severity, useTick } from '../components/bits'
-import { compactMoney, money, place, statusLabel, when } from '../lib/format'
+import { OPEN_STATUSES, compactMoney, money, place, statusLabel, when } from '../lib/format'
 import { serverText } from '../lib/i18n-core'
 import { useI18n } from '../lib/i18n'
 
-const OPEN = ['reported', 'verified', 'scheduled']
 
 export default function Overview({ openSite, openReport }) {
   useTick()
@@ -16,7 +15,7 @@ export default function Overview({ openSite, openReport }) {
   const { potholes, incidents, stats } = useLive()
   const [selected, setSelected] = useState(null)
   const open = useMemo(
-    () => potholes.filter((p) => OPEN.includes(p.status)).sort((a, b) => b.priority - a.priority),
+    () => potholes.filter((p) => OPEN_STATUSES.includes(p.status)).sort((a, b) => b.priority - a.priority),
     [potholes],
   )
   const crashes = incidents.filter((i) => i.kind === 'crash')
@@ -26,7 +25,7 @@ export default function Overview({ openSite, openReport }) {
   const activity = useMemo(() => {
     const items = []
     for (const s of potholes) {
-      for (const h of s.history) items.push({ ts: h.ts, icon: h.status === 'repaired' ? Check : TriangleAlert, text: `${s.id}: ${statusLabel(h.status)}`, sub: place(s), id: s.id })
+      for (const h of s.history) items.push({ ts: h.ts, icon: h.status === 'verified' ? Check : TriangleAlert, text: `${s.id}: ${statusLabel(h.status)}`, sub: place(s), id: s.id })
     }
     for (const i of incidents) {
       if (i.kind === 'crash') items.push({ ts: i.created_at, icon: Car, text: i.verified ? t('activity.crash') : t('activity.impact'), sub: i.reason })
@@ -55,8 +54,8 @@ export default function Overview({ openSite, openReport }) {
         </div>
         <div className="kpi">
           <div className="label">{t('kpi.repaired')}</div>
-          <div className="value">{p?.by_status.repaired ?? '—'}</div>
-          <div className="sub">{p ? t('kpi.repaired.sub', { n: p.by_status.scheduled }) : ' '}</div>
+          <div className="value">{p?.by_status.verified ?? '—'}</div>
+          <div className="sub">{p ? t('kpi.repaired.sub', { n: p.by_status.completed }) : ' '}</div>
         </div>
         <div className="kpi">
           <div className="label">{t('kpi.crashes')}</div>
@@ -87,7 +86,7 @@ export default function Overview({ openSite, openReport }) {
               <h2>{t('chart.reported')}</h2>
               <div className="aside legend">
                 <span><i style={{ background: 'var(--series-1)' }} />{t('status.reported')}</span>
-                <span><i style={{ background: 'var(--series-2)' }} />{t('status.repaired')}</span>
+                <span><i style={{ background: 'var(--series-2)' }} />{t('status.completed')}</span>
               </div>
             </div>
             <div className="panel-body">{stats ? <DailyBars data={stats.daily} /> : <div style={{ height: 170 }} />}</div>

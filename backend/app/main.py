@@ -21,7 +21,9 @@ from . import db
 from .config import GEOCODER, MEDIA_DIR
 from .engine import engine, get_prefs, set_prefs
 from .hub import hub
-from .potholes import OPEN_STATUSES, detector, router as potholes_router
+from . import auth
+from .potholes import OPEN_STATUSES, detector, migrate, router as potholes_router
+from .staff import router as staff_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -38,6 +40,8 @@ async def _tick_loop():
 @asynccontextmanager
 async def lifespan(_app):
     hub.attach_loop()
+    auth.staff_password()
+    migrate()
     task = asyncio.create_task(_tick_loop())
     yield
     task.cancel()
@@ -46,6 +50,7 @@ async def lifespan(_app):
 app = FastAPI(title="SentinelDrive API", version="2.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.include_router(potholes_router)
+app.include_router(staff_router)
 app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")
 
 
@@ -132,7 +137,7 @@ def stats():
             {
                 "day": time.strftime("%d %b", time.gmtime(start / 1000)),
                 "reported": sum(1 for p in potholes if start <= p["created_at"] < start + day),
-                "repaired": sum(1 for p in potholes if start <= (p.get("repaired_at") or 0) < start + day),
+                "repaired": sum(1 for p in potholes if start <= next((h["ts"] for h in p.get("history", []) if h["status"] == "completed"), 0) < start + day),
             }
         )
     by_status = Counter(p["status"] for p in potholes)
@@ -142,7 +147,7 @@ def stats():
             "total": len(potholes),
             "open": len(open_sites),
             "open_potholes": sum(p.get("count", 1) for p in open_sites),
-            "by_status": {s: by_status.get(s, 0) for s in ["reported", "verified", "scheduled", "repaired", "rejected"]},
+            "by_status": {s: by_status.get(s, 0) for s in ["reported", "acknowledged", "assigned", "in_progress", "completed", "verified", "reopened", "rejected"]},
             "open_by_severity": {s: by_sev.get(s, 0) for s in ["high", "medium", "low"]},
             "open_estimate": round(sum((p.get("estimate") or {}).get("total", 0) for p in open_sites), 2),
             "currency": next(((p.get("estimate") or {}).get("currency") for p in potholes if p.get("estimate")), "INR"),

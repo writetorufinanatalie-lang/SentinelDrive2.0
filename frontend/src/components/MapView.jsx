@@ -8,7 +8,17 @@ const INDIA = [21.5, 79]
 
 // Pothole sites (and optionally crash locations) on an OpenStreetMap base map.
 // `pickMode` turns a click into onPick({lat, lng}) for setting a location.
-export default function MapView({ sites = [], crashes = [], selectedId, onSelect, pickMode = false, onPick, className = '', emptyText }) {
+// Municipal colours: red = critical/high and unresolved, orange = being worked on,
+// green = verified, yellow = waiting to be acknowledged or assigned, grey = not a pothole.
+export function staffColor(s) {
+  if (s.status === 'verified') return '#3b8a4a'
+  if (s.status === 'rejected') return '#8a938f'
+  if (['critical', 'high'].includes(s.priority_info?.category)) return '#b3261e'
+  if (['assigned', 'in_progress', 'completed'].includes(s.status)) return '#d9730d'
+  return '#c9a400'
+}
+
+export default function MapView({ sites = [], crashes = [], selectedId, onSelect, pickMode = false, onPick, className = '', emptyText, colorBy = 'severity' }) {
   const { t, lang } = useI18n()
   const el = useRef(null)
   const map = useRef(null)
@@ -56,10 +66,10 @@ export default function MapView({ sites = [], crashes = [], selectedId, onSelect
         radius: sel ? radius + 3 : radius,
         color: sel ? '#1c2124' : '#ffffff',
         weight: sel ? 3 : 2,
-        fillColor: s.status === 'repaired' ? '#8a938f' : SEV_COLOR[s.severity] || '#687175',
-        fillOpacity: s.status === 'repaired' ? 0.6 : 0.92,
+        fillColor: colorBy === 'staff' ? staffColor(s) : ['verified', 'rejected'].includes(s.status) ? '#8a938f' : SEV_COLOR[s.severity] || '#687175',
+        fillOpacity: ['verified', 'rejected'].includes(s.status) ? 0.6 : 0.92,
       })
-      mk.bindTooltip(`<strong>${s.id}</strong><br>${place(s)}<br>${t('map.tip', { count: t('count.pothole', { n: s.count }), sev: t(`sev.${s.severity}`).toLowerCase() })}`, { direction: 'top', offset: [0, -6] })
+      mk.bindTooltip(`<strong>${s.id}</strong><br>${place(s)}<br>${t('map.tip', { count: t('count.pothole', { n: s.count }), sev: t(`sev.${s.severity}`).toLowerCase() })}${colorBy === 'staff' ? `<br>${s.citizens} citizens · ${s.priority_info?.category} · ${s.status.replace('_', ' ')}` : ''}`, { direction: 'top', offset: [0, -6] })
       mk.on('click', (e) => {
         L.DomEvent.stopPropagation(e)
         cb.current.onSelect?.(s.id)
@@ -85,7 +95,7 @@ export default function MapView({ sites = [], crashes = [], selectedId, onSelect
       if (pts.length === 1) m.setView(pts[0], 16)
       else m.fitBounds(pts, { padding: [40, 40], maxZoom: 16 })
     }
-  }, [sites, crashes, selectedId, lang]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sites, crashes, selectedId, lang, colorBy]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const s = sites.find((x) => x.id === selectedId)
@@ -102,12 +112,12 @@ export default function MapView({ sites = [], crashes = [], selectedId, onSelect
           <div>{emptyText}</div>
         </div>
       )}
-      {located && (
+      {located && colorBy !== 'staff' && (
         <div className="map-legend" aria-label={t('map.legend')}>
           <span className="sev high"><i />{t('sev.high')}</span>
           <span className="sev medium"><i />{t('sev.medium')}</span>
           <span className="sev low"><i />{t('sev.low')}</span>
-          <span className="sev" style={{ color: '#687175' }}><i style={{ background: '#8a938f' }} />{t('status.repaired')}</span>
+          <span className="sev" style={{ color: '#687175' }}><i style={{ background: '#8a938f' }} />{t('status.verified')}</span>
         </div>
       )}
     </div>

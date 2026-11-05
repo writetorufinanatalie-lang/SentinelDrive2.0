@@ -3,15 +3,15 @@ import { Download, List, Map as MapIcon } from 'lucide-react'
 import { useLive } from '../hooks/useLive'
 import MapView from '../components/MapView'
 import { Empty, Severity, Status, useTick } from '../components/bits'
-import { money, place, when } from '../lib/format'
+import { OPEN_STATUSES, money, place, when } from '../lib/format'
 import { useI18n } from '../lib/i18n'
 
 // [key, label key, test]
 const FILTERS = [
-  ['open', 'filter.open', (s) => ['reported', 'verified', 'scheduled'].includes(s)],
+  ['open', 'filter.open', (s) => OPEN_STATUSES.includes(s)],
   ['reported', 'filter.new', (s) => s === 'reported'],
-  ['scheduled', 'filter.scheduled', (s) => s === 'scheduled'],
-  ['repaired', 'filter.repaired', (s) => s === 'repaired'],
+  ['progress', 'filter.progress', (s) => ['acknowledged', 'assigned', 'in_progress'].includes(s)],
+  ['done', 'filter.done', (s) => s === 'verified'],
   ['all', 'filter.all', () => true],
 ]
 const SORTS = {

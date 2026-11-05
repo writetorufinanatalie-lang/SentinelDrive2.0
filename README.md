@@ -32,6 +32,24 @@ Run `npm test` in `frontend/` to check that no sentence is missing in any langua
 
 Not built: logins and roles, a separate municipality area, a verifier step, notifications, analytics page. Anyone with the link can change a site's status.
 
+## Municipal dashboard (staff only)
+
+Open `/#/municipality` (link "Municipal dashboard" in the citizen app). Citizens can only *report and follow* cases; only staff can change a case.
+
+| Username | Role | Can do |
+|---|---|---|
+| `officer` | Municipal officer | acknowledge, assign team and target date, override priority (reason required), reject duplicates/false reports, reopen |
+| `repairteam` | Repair team | start repair, upload the "after" photo, mark completed |
+| `verifier` | Verifier / administrator | everything an officer can, plus accept or reject a finished repair |
+
+The password is shared by all three. On Render it is generated for you: open the service, **Environment**, and read `SENTINEL_STAFF_PASSWORD`. Locally set `SENTINEL_STAFF_PASSWORD` yourself (if unset, a random one is printed in the server log).
+
+Pages: Command centre (counts and priority queue), All cases (filters, search, CSV), Map, Analytics, Teams and audit.
+Workflow: reported, acknowledged, assigned, in progress, completed (after photo required), verified. A rejected repair reopens the case.
+Priority score = community reports 30%, safety context 30%, size 15%, time open 10% (rescaled). Duplicates are matched by location (8 m) plus photo similarity; if unsure the citizen is asked.
+
+Limits (be honest with judges): one shared staff password, no per-person accounts or city/ward jurisdictions, notifications are in-app only (no email/SMS), the municipal pages are English only, photo similarity is a simple heuristic, and on the free Render plan the database and photos are wiped on restart.
+
 ## Run it
 
 You need **Python 3.10+** and **Node.js 18+**.

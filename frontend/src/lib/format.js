@@ -39,6 +39,7 @@ export const place = (site) =>
 
 export const capital = (s) => (s ? s[0].toUpperCase() + s.slice(1) : '')
 
-const STATUSES = ['reported', 'verified', 'scheduled', 'repaired', 'rejected']
+export const STATUSES = ['reported', 'acknowledged', 'assigned', 'in_progress', 'completed', 'verified', 'reopened', 'rejected']
+export const OPEN_STATUSES = ['reported', 'acknowledged', 'assigned', 'in_progress', 'completed', 'reopened']
 export const statusLabel = (s) => (STATUSES.includes(s) ? tr(`status.${s}`) : capital(s))
 export const severityLabel = (s) => (['high', 'medium', 'low'].includes(s) ? tr(`sev.${s}`) : capital(s))

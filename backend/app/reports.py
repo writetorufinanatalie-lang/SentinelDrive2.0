@@ -243,3 +243,90 @@ def work_order_pdf(site, rate_card):
 
     doc.build(el, onFirstPage=_footer, onLaterPages=_footer)
     return buf.getvalue()
+
+
+# -- repair verification report ---------------------------------------------------
+
+STATUS_TXT = {
+    "reported": "Reported", "acknowledged": "Acknowledged", "assigned": "Assigned", "in_progress": "Repair in progress",
+    "completed": "Repair completed (awaiting verification)", "verified": "Verified", "reopened": "Reopened", "rejected": "Not a pothole",
+}
+
+
+def _photo(url, width):
+    if not url:
+        return Paragraph("No photo on file.", SMALL)
+    path = MEDIA_DIR / url.replace("/media/", "", 1)
+    if not path.exists():
+        return Paragraph("Photo file missing.", SMALL)
+    img = Image(str(path))
+    img.drawWidth, img.drawHeight = width, width * img.imageHeight / img.imageWidth
+    return img
+
+
+def verification_pdf(site, rate_card):
+    """Record of one case: before photo, after photo, who verified it and the full history.
+    It says VERIFIED only when the case really is verified."""
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm, topMargin=16 * mm, bottomMargin=18 * mm,
+        title=f"Repair verification {site['id']}", author="SentinelDrive",
+    )
+    W = A4[0] - 36 * mm
+    est = site.get("estimate") or {}
+    cur = est.get("currency", rate_card.get("currency", "INR"))
+    hist = site.get("history") or []
+    first = lambda s: next((h["ts"] for h in hist if h["status"] == s), None)
+    repair = site.get("repair") or {}
+    ver = site.get("verification") or {}
+    ok = site["status"] == "verified" and ver.get("result") == "accepted"
+    el = []
+
+    head = Table(
+        [[Paragraph("<font color='#5e676b'>SentinelDrive</font>", BASE), Paragraph(f"<font color='#5e676b'>Case</font><br/><b>{site['id']}</b>", RIGHT)],
+         [Paragraph("Repair verification report", H1), Paragraph(f"Issued {_date(time.time() * 1000)}", RIGHT)]],
+        colWidths=[W * 0.68, W * 0.32], hAlign="LEFT",
+    )
+    head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "BOTTOM"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                              ("LINEBELOW", (0, 1), (-1, 1), 1.2, INK), ("BOTTOMPADDING", (0, 1), (-1, 1), 8)]))
+    el += [head, Spacer(1, 8)]
+
+    colour = "#3b6e3b" if ok else "#a15c00"
+    result = "VERIFIED. The repair was reviewed and accepted." if ok else f"NOT VERIFIED. Current status: {STATUS_TXT.get(site['status'], site['status'])}."
+    el.append(Paragraph(f"<font color='{colour}'><b>{result}</b></font>", ParagraphStyle("r", parent=BASE, fontSize=11, leading=15)))
+    el.append(Spacer(1, 6))
+
+    jur = site.get("address") or {}
+    loc = f"{site['lat']:.6f}, {site['lng']:.6f}" if site.get("lat") is not None else "Not recorded"
+    rows = [
+        ("Case ID", site["id"]),
+        ("First reported", _date(site["created_at"])),
+        ("Location", f"{jur.get('display_name') or 'Address unavailable'}<br/>{loc}"),
+        ("Unique citizens who reported it", f"{site.get('citizens', 1)} (total reports: {site.get('reports', 1)})"),
+        ("Initial repair estimate", _money(est.get("total", 0), cur) + " incl. GST"),
+        ("Assigned team", (site.get("assignment") or {}).get("team") or repair.get("team") or "Not recorded"),
+        ("Repair started", _date(first("in_progress")) if first("in_progress") else "Not recorded"),
+        ("Repair completed", _date(repair["ts"]) if repair.get("ts") else "Not completed"),
+        ("Actual repair cost", _money(repair["actual_cost"], cur) if repair.get("actual_cost") is not None else "Not entered"),
+    ]
+    if ver:
+        rows.append(("Review result", f"{ver.get('result', '').capitalize()} by a verifier on {_date(ver['ts'])}" + (f". Reason: {ver['reason']}" if ver.get("reason") else "")))
+    el.append(_kv_table(rows, [48 * mm, W - 48 * mm]))
+
+    el.append(Paragraph("Before and after", H2))
+    half = W * 0.47
+    before = (site.get("evidence") or [{}])[0].get("photo")
+    ba = Table(
+        [[Paragraph("BEFORE (citizen photo)", LABEL), Paragraph("AFTER (repair team photo)", LABEL)],
+         [_photo(before, half), _photo(repair.get("photo"), half) if repair.get("photo") else Paragraph("No after-repair photo yet.", SMALL)]],
+        colWidths=[W * 0.5, W * 0.5], hAlign="LEFT",
+    )
+    ba.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
+    el.append(ba)
+    el.append(Spacer(1, 4))
+    el.append(Paragraph("Photos support the review but do not by themselves prove the road was repaired properly. A physical inspection may still be required.", SMALL))
+
+    el.append(Paragraph("Status history", H2))
+    el.append(_kv_table([(_date(h["ts"]), f"<b>{STATUS_TXT.get(h['status'], h['status'])}</b>" + (f" ({h['by']})" if h.get("by") else "") + (f". {h['note']}" if h.get("note") else "")) for h in hist], [38 * mm, W - 38 * mm]))
+    doc.build(el, onFirstPage=_footer, onLaterPages=_footer)
+    return buf.getvalue()

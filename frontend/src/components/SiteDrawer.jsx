@@ -1,42 +1,28 @@
 import { useEffect, useState } from 'react'
-import { ExternalLink, FileText, MapPin, Trash2, X } from 'lucide-react'
-import { api, workOrderUrl } from '../api'
+import { ExternalLink, FileText, MapPin, X } from 'lucide-react'
+import { verificationUrl, workOrderUrl } from '../api'
 import { useLive } from '../hooks/useLive'
 import { coords, dateTime, money, place, statusLabel } from '../lib/format'
 import { boqItem, boqUnit, serverText } from '../lib/i18n-core'
 import { useI18n } from '../lib/i18n'
 import { BeforeAfter, PriorityWhy } from './Evidence'
 import MapView from './MapView'
-import { Severity, Status, toast } from './bits'
-
-// next status -> label key for the button that moves a site there
-const NEXT = {
-  reported: [['verified', 'act.verify'], ['rejected', 'status.rejected']],
-  verified: [['scheduled', 'act.schedule'], ['rejected', 'status.rejected']],
-  scheduled: [['repaired', 'act.repaired']],
-  repaired: [['reported', 'act.reopen']],
-  rejected: [['reported', 'act.reopen']],
-}
+import { Severity, Status } from './bits'
 
 const SOURCES = ['device', 'photo-exif', 'set-on-map', 'none']
 
-export default function SiteDrawer({ id, onClose }) {
+// Read-only case view. Citizens see this as it is. The municipal dashboard passes
+// `site` (the full staff copy), `staffPanel` (the action buttons) and `onPickLocation`.
+export default function SiteDrawer({ id, onClose, site: given, staffPanel, onPickLocation, children }) {
   const { t } = useI18n()
-  const { potholes, upsertPothole, health } = useLive()
-  const site = potholes.find((p) => p.id === id)
+  const { potholes, health } = useLive()
+  const site = given || potholes.find((p) => p.id === id)
   const [photo, setPhoto] = useState(0)
   const [picking, setPicking] = useState(false)
-  const [note, setNote] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [repairing, setRepairing] = useState(false)
-  const [afterFile, setAfterFile] = useState(null)
-  const [cost, setCost] = useState('')
 
   useEffect(() => {
     setPhoto(site ? site.evidence.length - 1 : 0)
     setPicking(false)
-    setRepairing(false)
-    setAfterFile(null)
   }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -48,46 +34,7 @@ export default function SiteDrawer({ id, onClose }) {
   if (!site) return null
   const ev = site.evidence[Math.min(photo, site.evidence.length - 1)]
   const est = site.estimate
-
-  const submitRepair = async () => {
-    setBusy(true)
-    try {
-      const fd = new FormData()
-      fd.append('file', afterFile)
-      if (note) fd.append('note', note)
-      if (cost !== '') fd.append('actual_cost', cost)
-      upsertPothole(await api.completeRepair(site.id, fd))
-      toast(t('repair.toast', { id: site.id }))
-      setRepairing(false)
-      setAfterFile(null)
-      setCost('')
-    } catch (e) {
-      toast(e.message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const update = async (body, msg) => {
-    setBusy(true)
-    try {
-      const rec = await api.updatePothole(site.id, body)
-      upsertPothole(rec)
-      if (msg) toast(msg)
-      setNote('')
-    } catch (e) {
-      toast(e.message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const remove = async () => {
-    if (!window.confirm(t('site.confirm', { id: site.id }))) return
-    await api.deletePothole(site.id)
-    toast(t('site.deleted', { id: site.id }))
-    onClose()
-  }
+  const team = site.assignment?.team
 
   return (
     <>
@@ -107,6 +54,7 @@ export default function SiteDrawer({ id, onClose }) {
         </div>
 
         <div className="drawer-body">
+          {children}
           <div>
             <div className="photo">
               <img src={ev.annotated} alt={t('site.alt', { id: site.id })} />
@@ -134,8 +82,11 @@ export default function SiteDrawer({ id, onClose }) {
             <div><div className="k">{t('fact.area')}</div><div className="v">{site.area_m2.toFixed(2)} m²</div></div>
             <div><div className="k">{t('fact.deepest')}</div><div className="v">{Math.round(site.depth_max_m * 1000)} mm</div></div>
             <div><div className="k">{t('fact.volume')}</div><div className="v">{(site.volume_m3 * 1000).toFixed(0)} L</div></div>
+            <div><div className="k">{t('fact.team')}</div><div className="v">{team || <span className="muted">{t('fact.noteam')}</span>}</div></div>
+            <div><div className="k">{t('fact.target')}</div><div className="v">{site.assignment?.target_date ? dateTime(site.assignment.target_date) : '—'}</div></div>
           </div>
 
+          {staffPanel}
           <PriorityWhy site={site} />
           <BeforeAfter site={site} />
 
@@ -143,17 +94,21 @@ export default function SiteDrawer({ id, onClose }) {
             <h3 style={{ marginBottom: 8 }}>{t('site.location')}</h3>
             {site.lat == null || picking ? (
               <>
-                {!picking && <div className="note warn" style={{ marginBottom: 8 }}>{t('site.noloc')}</div>}
-                <MapView
-                  sites={site.lat != null ? [site] : []}
-                  selectedId={site.id}
-                  pickMode
-                  onPick={async (p) => {
-                    await update(p, t('site.locsaved'))
-                    setPicking(false)
-                  }}
-                />
-                {picking && <button className="btn btn-sm" style={{ marginTop: 8 }} onClick={() => setPicking(false)}>{t('site.cancel')}</button>}
+                {!picking && <div className="note warn" style={{ marginBottom: 8 }}>{t('site.noloc.public')}</div>}
+                {onPickLocation && (
+                  <>
+                    <MapView
+                      sites={site.lat != null ? [site] : []}
+                      selectedId={site.id}
+                      pickMode
+                      onPick={async (p) => {
+                        await onPickLocation(p)
+                        setPicking(false)
+                      }}
+                    />
+                    {picking && <button className="btn btn-sm" style={{ marginTop: 8 }} onClick={() => setPicking(false)}>{t('site.cancel')}</button>}
+                  </>
+                )}
               </>
             ) : (
               <dl className="dl">
@@ -176,9 +131,11 @@ export default function SiteDrawer({ id, onClose }) {
                 <dd>
                   {SOURCES.includes(site.gps_source) ? t(`src.${site.gps_source}`) : site.gps_source}
                   {site.gps_accuracy_m ? `, ±${Math.round(site.gps_accuracy_m)} m` : ''}{' '}
-                  <button className="btn btn-ghost btn-sm" onClick={() => setPicking(true)}>
-                    <MapPin size={14} /> {t('dl.move')}
-                  </button>
+                  {onPickLocation && (
+                    <button className="btn btn-ghost btn-sm" onClick={() => setPicking(true)}>
+                      <MapPin size={14} /> {t('dl.move')}
+                    </button>
+                  )}
                 </dd>
               </dl>
             )}
@@ -217,15 +174,11 @@ export default function SiteDrawer({ id, onClose }) {
             <ul className="timeline">
               {site.history.map((h, i) => (
                 <li key={i}>
-                  <strong>{statusLabel(h.status)}</strong> <span className="muted small">{dateTime(h.ts)}</span>
+                  <strong>{statusLabel(h.status)}</strong> <span className="muted small">{dateTime(h.ts)}{h.by ? ` · ${h.by}` : ''}{h.internal ? ' · internal note' : ''}</span>
                   {h.note && <div className="muted">{h.note}</div>}
                 </li>
               ))}
             </ul>
-            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-              <input type="text" value={note} onChange={(e) => setNote(e.target.value)} placeholder={t('site.note.ph')} style={{ flex: 1 }} />
-              <button className="btn" disabled={!note.trim() || busy} onClick={() => update({ note }, t('site.note.done'))}>{t('site.note.add')}</button>
-            </div>
           </section>
 
           <p className="muted small">
@@ -234,35 +187,13 @@ export default function SiteDrawer({ id, onClose }) {
           </p>
         </div>
 
-        {repairing && (
-          <div className="repair-form">
-            <label className="small" htmlFor="after-photo">{t('repair.need')}</label>
-            <input id="after-photo" type="file" accept="image/*" capture="environment" onChange={(e) => setAfterFile(e.target.files?.[0] || null)} />
-            <input type="number" min="0" inputMode="decimal" value={cost} onChange={(e) => setCost(e.target.value)} placeholder={t('repair.cost.ph')} />
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-primary" disabled={!afterFile || busy} onClick={submitRepair}>{t('repair.upload')}</button>
-              <button className="btn" onClick={() => setRepairing(false)}>{t('site.cancel')}</button>
-            </div>
-          </div>
-        )}
-
         <div className="drawer-foot">
-          {NEXT[site.status].map(([s, labelKey], i) => (
-            <button
-              key={s}
-              className={`btn ${i === 0 && s !== 'reported' ? 'btn-primary' : ''}`}
-              disabled={busy}
-              onClick={() => (s === 'repaired' ? setRepairing(true) : update({ status: s, note: note || undefined }, t('site.status.toast', { id: site.id, status: statusLabel(s) })))}
-            >
-              {t(labelKey)}
-            </button>
-          ))}
           <a className="btn" href={workOrderUrl(site.id)} target="_blank" rel="noreferrer">
             <FileText size={16} /> {t('site.workorder')}
           </a>
-          <button className="btn btn-ghost btn-danger" style={{ marginLeft: 'auto' }} onClick={remove} aria-label={t('site.delete')}>
-            <Trash2 size={16} />
-          </button>
+          <a className="btn" href={verificationUrl(site.id)} target="_blank" rel="noreferrer">
+            <FileText size={16} /> {t('site.verification')}
+          </a>
         </div>
       </aside>
     </>

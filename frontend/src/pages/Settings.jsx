@@ -6,6 +6,7 @@ import { toast } from '../components/bits'
 import { money } from '../lib/format'
 import { estimatePreview } from '../lib/estimate'
 import { Rich, useI18n } from '../lib/i18n'
+import { useStaff } from '../lib/auth'
 
 // [field, label key, input type, placeholder key]
 const RATE_FIELDS = [
@@ -25,6 +26,8 @@ const RATE_FIELDS = [
 export default function Settings() {
   const { t } = useI18n()
   const { health } = useLive()
+  const staff = useStaff()
+  const canEditRates = ['officer', 'verifier'].includes(staff?.user?.role)
   const [card, setCard] = useState(null)
   const [saving, setSaving] = useState(false)
   const [prefs, setPrefs] = useState(null)
@@ -69,6 +72,7 @@ export default function Settings() {
   return (
     <div className="stack" style={{ maxWidth: 920 }}>
       <form className="panel" onSubmit={saveCard}>
+        {!canEditRates && <div className="note warn" style={{ margin: '12px 18px 0' }}>{t('sys.rates.staff')}</div>}
         <div className="section">
           <div className="section-head">
             <h2>{t('rate.title')}</h2>
@@ -87,6 +91,7 @@ export default function Settings() {
                       min={type === 'number' ? 0 : undefined}
                       placeholder={phKey ? t(phKey) : undefined}
                       value={card[k] ?? ''}
+                      disabled={!canEditRates}
                       onChange={(e) => setCard({ ...card, [k]: type === 'number' ? e.target.value : e.target.value })}
                     />
                   </div>
@@ -96,7 +101,7 @@ export default function Settings() {
                 {t('rate.example', { amount: money(estimatePreview(card)) })}
               </p>
               <div>
-                <button className="btn btn-primary" disabled={saving}>{saving ? t('rate.saving') : t('rate.save')}</button>
+                <button className="btn btn-primary" disabled={saving || !canEditRates}>{saving ? t('rate.saving') : t('rate.save')}</button>
               </div>
             </>
           ) : (

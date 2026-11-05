@@ -52,7 +52,9 @@ for (const file of walk(new URL('../src', import.meta.url).pathname)) {
 for (const k of used) assert.ok(STRINGS[k], `code uses missing key: ${k}`)
 // dynamic keys built from a prefix must have every variant
 const dynamic = {
-  'status.': ['reported', 'verified', 'scheduled', 'repaired', 'rejected'],
+  'status.': ['reported', 'acknowledged', 'assigned', 'in_progress', 'completed', 'verified', 'reopened', 'rejected'],
+  'notif.': ['acknowledged', 'assigned', 'in_progress', 'completed', 'verified', 'reopened', 'rejected'],
+  'prio.': ['critical', 'high', 'medium', 'low'],
   'sev.': ['high', 'medium', 'low'],
   'tier.': ['normal', 'elevated', 'critical'],
   'outcome.': ['answered', 'recovered'],

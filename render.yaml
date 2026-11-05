@@ -8,5 +8,11 @@ services:
     envVars:
       - key: SENTINEL_API_KEY
         generateValue: true
+      # Password for the municipal dashboard sign-in. Render generates it; read it under
+      # this service > Environment. Usernames: officer, repairteam, verifier.
+      - key: SENTINEL_STAFF_PASSWORD
+        generateValue: true
+      - key: SENTINEL_SECRET
+        generateValue: true
       - key: SENTINEL_GEOCODER
         value: nominatim

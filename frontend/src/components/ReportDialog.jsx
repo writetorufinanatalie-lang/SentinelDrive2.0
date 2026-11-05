@@ -28,6 +28,7 @@ export default function ReportDialog({ onClose, onOpenSite }) {
   const [step, setStep] = useState(-1)
   const [error, setError] = useState(null)
   const [result, setResult] = useState(null)
+  const [confirm, setConfirm] = useState(null)
 
   const pick = (f) => {
     if (!f) return
@@ -62,8 +63,9 @@ export default function ReportDialog({ onClose, onOpenSite }) {
       .catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const submit = async () => {
+  const submit = async (sameAs) => {
     setError(null)
+    setConfirm(null)
     setResult(null)
     try {
       setStep(0)
@@ -88,12 +90,19 @@ export default function ReportDialog({ onClose, onOpenSite }) {
         fd.append('gps_source', loc.source)
       }
       if (note.trim()) fd.append('note', note.trim())
+      if (typeof sameAs === 'string') fd.append('same_as', sameAs)
       setStep(1)
       const t = setTimeout(() => setStep(2), 500)
       const t2 = setTimeout(() => setStep(3), 1400)
       const res = await api.upload(fd)
       clearTimeout(t)
       clearTimeout(t2)
+      if (res.needs_confirmation) {
+        // A nearby open case exists and the photos do not clearly match: ask the citizen.
+        setStep(-1)
+        setConfirm(res.candidate)
+        return
+      }
       setStep(4)
       setResult({ ...res, privacy: report })
     } catch (e) {
@@ -122,7 +131,23 @@ export default function ReportDialog({ onClose, onOpenSite }) {
           </button>
         </div>
         <div className="dialog-body">
-          {!result && (
+          {confirm && !result && (
+            <div className="stack">
+              <div className="note warn"><strong>{t('dup.title')}</strong></div>
+              <p>{t('dup.body', { id: confirm.id, m: Math.round(confirm.distance_m), n: confirm.citizens })}</p>
+              {confirm.photo && (
+                <figure style={{ margin: 0 }}>
+                  <img src={confirm.photo} alt={t('dup.theirs')} style={{ width: '100%', borderRadius: 6, border: '1px solid var(--line)' }} />
+                  <figcaption className="muted small">{t('dup.theirs')}</figcaption>
+                </figure>
+              )}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button className="btn btn-primary" disabled={busy} onClick={() => submit(confirm.id)}>{t('dup.yes')}</button>
+                <button className="btn" disabled={busy} onClick={() => submit('new')}>{t('dup.no')}</button>
+              </div>
+            </div>
+          )}
+          {!result && !confirm && (
             <>
               <div
                 className={`drop ${over ? 'over' : ''}`}
@@ -215,7 +240,7 @@ export default function ReportDialog({ onClose, onOpenSite }) {
                 <button className="btn" onClick={onClose} disabled={busy}>
                   {t('rep.cancel')}
                 </button>
-                <button className="btn btn-primary" onClick={submit} disabled={!file || busy}>
+                <button className="btn btn-primary" onClick={() => submit()} disabled={!file || busy}>
                   <Upload size={16} /> {busy ? t('rep.analysing') : t('rep.analyse')}
                 </button>
               </div>

@@ -30,5 +30,14 @@ DEDUP_RADIUS_M = float(os.getenv("SENTINEL_DEDUP_RADIUS_M", "8"))
 # Minimum detector confidence kept.
 MIN_CONFIDENCE = float(os.getenv("SENTINEL_MIN_CONFIDENCE", "0.50"))
 
+# Staff sign-in (municipal dashboard). One shared password for the three demo roles
+# (officer, repairteam, verifier). If unset, a random one is generated and printed at start-up.
+STAFF_PASSWORD = os.getenv("SENTINEL_STAFF_PASSWORD", "")
+SECRET = os.getenv("SENTINEL_SECRET", "") or API_KEY
+# A case with no target date counts as overdue after this many days.
+OVERDUE_DAYS = float(os.getenv("SENTINEL_OVERDUE_DAYS", "7"))
+# Photo similarity at or above this merges a nearby report automatically; below it the citizen is asked.
+DUP_AUTO_SIMILARITY = float(os.getenv("SENTINEL_DUP_SIMILARITY", "0.30"))
+
 for _d in (DATA_DIR, MEDIA_DIR, MODELS_DIR):
     _d.mkdir(parents=True, exist_ok=True)

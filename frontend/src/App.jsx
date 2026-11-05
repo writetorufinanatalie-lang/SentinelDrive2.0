@@ -13,6 +13,8 @@ import Driver from './pages/Driver'
 import Incidents from './pages/Incidents'
 import Settings from './pages/Settings'
 import MyReports from './pages/MyReports'
+import { OPEN_STATUSES } from './lib/format'
+import Municipal from './pages/municipal/Municipal'
 
 // title / sub are translation keys (nav.<page> and sub.<page>)
 const PAGES = {
@@ -93,7 +95,7 @@ function Shell() {
     setSiteId(id)
   }, [])
 
-  const openCount = potholes.filter((p) => ['reported', 'verified', 'scheduled'].includes(p.status)).length
+  const openCount = potholes.filter((p) => OPEN_STATUSES.includes(p.status)).length
   const activeIncidents = incidents.filter((i) => ['awaiting_driver', 'escalated'].includes(i.status)).length
 
   useEffect(() => {
@@ -128,6 +130,7 @@ function Shell() {
           })}
         </div>
         <VehiclePanel />
+        <a href="#/municipality" className="muni-link">{t('nav.municipal')}</a>
       </nav>
 
       <div className="main">
@@ -167,12 +170,22 @@ function Shell() {
   )
 }
 
+function Root() {
+  const [hash, setHash] = useState(location.hash)
+  useEffect(() => {
+    const on = () => setHash(location.hash)
+    window.addEventListener('hashchange', on)
+    return () => window.removeEventListener('hashchange', on)
+  }, [])
+  return /^#\/municipality/.test(hash) ? <Municipal /> : <Shell />
+}
+
 export default function App() {
   return (
     <I18nProvider>
       <LiveProvider>
         <SensorsProvider>
-          <Shell />
+          <Root />
         </SensorsProvider>
       </LiveProvider>
     </I18nProvider>
