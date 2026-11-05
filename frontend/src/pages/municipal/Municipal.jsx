@@ -3,7 +3,7 @@ import { Activity, Bell, ChartColumn, ClipboardList, LayoutDashboard, LogOut, Ma
 import { api } from '../../api'
 import { setSession, useStaff } from '../../lib/auth'
 import { useLive } from '../../hooks/useLive'
-import { Toaster } from '../../components/bits'
+import { Toaster, toast } from '../../components/bits'
 import { when as whenTs } from '../../lib/format'
 import Admin from './Admin'
 import Analytics from './Analytics'
@@ -60,6 +60,38 @@ function Bell_({ unread, items, onOpen, onRead }) {
   )
 }
 
+function ChangePassword() {
+  const [open, setOpen] = useState(false)
+  const [cur, setCur] = useState('')
+  const [next, setNext] = useState('')
+  const [err, setErr] = useState('')
+  const save = async (e) => {
+    e.preventDefault()
+    setErr('')
+    try {
+      setSession(await api.changePassword(cur, next))
+      setOpen(false)
+      setCur('')
+      setNext('')
+      toast('Password changed')
+    } catch (x) {
+      setErr(x.message)
+    }
+  }
+  if (!open) return <button className="who-out" style={{ marginTop: 10 }} onClick={() => setOpen(true)}>Change password</button>
+  return (
+    <form onSubmit={save} className="vcode">
+      <label className="small" htmlFor="cp1">Current password</label>
+      <input id="cp1" type="password" autoComplete="current-password" value={cur} onChange={(e) => setCur(e.target.value)} style={{ textTransform: 'none' }} />
+      <label className="small" htmlFor="cp2">New password (8+ characters)</label>
+      <input id="cp2" type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} style={{ textTransform: 'none' }} />
+      {err && <div className="small" style={{ color: '#f0a29c' }}>{err}</div>}
+      <button className="btn btn-sm btn-block" disabled={!cur || next.length < 8}>Save password</button>
+      <button type="button" className="who-out" onClick={() => setOpen(false)}>Cancel</button>
+    </form>
+  )
+}
+
 export default function Municipal() {
   const staff = useStaff()
   const sub = useSub()
@@ -102,7 +134,8 @@ export default function Municipal() {
           <h3>{user.name}</h3>
           <p>{ROLE_LABEL[user.role]}</p>
           <button className="btn btn-block" onClick={() => setSession(null)}><LogOut size={15} /> Sign out</button>
-          <a href="#/overview" className="conn" style={{ marginTop: 12, color: '#9aa3a0' }}>Citizen app</a>
+          <ChangePassword />
+          <a href="#/" className="conn" style={{ marginTop: 12, color: '#9aa3a0' }}>Home page</a>
           <div className="conn"><span className={`dot ${connected ? 'live' : 'bad'}`} />{connected ? 'Live' : 'Reconnecting…'}</div>
         </div>
       </nav>

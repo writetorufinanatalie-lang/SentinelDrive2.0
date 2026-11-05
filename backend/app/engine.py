@@ -92,7 +92,15 @@ def _post_webhook(payload):
     threading.Thread(target=run, daemon=True).start()
 
 
+# Crashes waiting for the driver to answer, shared by every vehicle so that escalation still happens
+# when the phone that detected the crash has been smashed or has lost connection.
+PENDING_CRASHES = {}  # incident id -> deadline (epoch s)
+
+
 class LiveEngine:
+    """The live state of ONE vehicle: driver alertness, alertness check, siren. The server keeps one of
+    these per vehicle code, so two cars never see each other's driver."""
+
     def __init__(self):
         self.driver = {"active": False}
         self._driver_at = 0.0
@@ -100,7 +108,6 @@ class LiveEngine:
         self._cooldown_until = 0.0
         self.siren = None
         self._siren_last = 0.0
-        self._pending_crashes = {}  # id -> deadline (epoch s)
 
     # ------------------------------------------------------------------
     def snapshot(self):
@@ -305,7 +312,7 @@ class LiveEngine:
         }
         db.put("incidents", rec)
         if verified:
-            self._pending_crashes[rec["id"]] = time.time() + DRIVER_RESPONSE_S
+            PENDING_CRASHES[rec["id"]] = time.time() + DRIVER_RESPONSE_S
         self._geocode_async("incidents", rec)
         return [{"type": "incident", "incident": rec}]
 
@@ -327,7 +334,7 @@ class LiveEngine:
             rec["timeline"].append({"ts": _ts(), "event": "marked resolved"})
         else:
             return []
-        self._pending_crashes.pop(rid, None)
+        PENDING_CRASHES.pop(rid, None)
         db.put("incidents", rec)
         return [{"type": "incident", "incident": rec}]
 
@@ -400,6 +407,7 @@ class LiveEngine:
 
     # -- periodic ------------------------------------------------------------
     def tick(self):
+        """Per-vehicle timers: driver feed timeout, alertness-check deadline, siren fade."""
         events = []
         now = time.time()
         if self.driver.get("active") and now - self._driver_at > DRIVER_TTL_S:
@@ -413,10 +421,18 @@ class LiveEngine:
 
         if self.siren and now - self._siren_last > SIREN_QUIET_S:
             events += self._end_siren("quiet")
+        return events
 
-        for rid, deadline in list(self._pending_crashes.items()):
+    def idle(self):
+        return not self.driver.get("active") and not self.talkback and not self.siren
+
+    def tick_crashes(self):
+        """Global: escalate crashes nobody answered. Runs whether or not any phone is connected."""
+        events = []
+        now = time.time()
+        for rid, deadline in list(PENDING_CRASHES.items()):
             if now >= deadline:
-                self._pending_crashes.pop(rid, None)
+                PENDING_CRASHES.pop(rid, None)
                 rec = db.get("incidents", rid)
                 if rec and rec["status"] == "awaiting_driver":
                     rec["status"] = "escalated"

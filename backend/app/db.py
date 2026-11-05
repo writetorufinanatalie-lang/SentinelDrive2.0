@@ -14,7 +14,7 @@ import time
 
 from .config import DB_PATH
 
-TABLES = ("potholes", "incidents", "talkbacks", "notifications")
+TABLES = ("potholes", "incidents", "talkbacks", "notifications", "staff", "citizens")
 
 _lock = threading.RLock()
 _conn = None

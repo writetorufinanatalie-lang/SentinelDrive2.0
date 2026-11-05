@@ -15,6 +15,9 @@ import Settings from './pages/Settings'
 import MyReports from './pages/MyReports'
 import { OPEN_STATUSES } from './lib/format'
 import Municipal from './pages/municipal/Municipal'
+import Home from './pages/Home'
+import { signOut, useCitizen } from './lib/citizen'
+import { cleanVehicleCode, getVehicleCode, setVehicleCode } from './lib/vehicle'
 
 // title / sub are translation keys (nav.<page> and sub.<page>)
 const PAGES = {
@@ -42,6 +45,33 @@ function useRoute() {
 
 const KNOWN_STATES = ['off', 'starting', 'loading', 'live', 'waiting', 'blocked', 'missing', 'unsupported', 'error']
 const dotClass = (s) => (s === 'live' ? 'live' : ['blocked', 'error', 'missing'].includes(s) ? 'bad' : ['off', 'unsupported'].includes(s) ? '' : 'warn')
+
+function VehicleCode() {
+  const { t } = useI18n()
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState('')
+  const save = (e) => {
+    e.preventDefault()
+    if (setVehicleCode(value)) location.reload() // reconnect under the new code
+  }
+  return (
+    <div className="vcode">
+      <div className="vcode-row">
+        <span>{t('vehicle.code')}</span>
+        <strong>{getVehicleCode()}</strong>
+        {!editing && <button className="who-out" onClick={() => setEditing(true)}>{t('vehicle.change')}</button>}
+      </div>
+      {editing && (
+        <form onSubmit={save}>
+          <label className="small" htmlFor="vc">{t('vehicle.prompt')}</label>
+          <input id="vc" value={value} onChange={(e) => setValue(cleanVehicleCode(e.target.value))} autoFocus maxLength={24} />
+          <button className="btn btn-sm btn-block" disabled={value.length < 4}>{t('vehicle.save')}</button>
+        </form>
+      )}
+      <p className="small">{t('vehicle.hint')}</p>
+    </div>
+  )
+}
 
 function VehiclePanel() {
   const s = useSensors()
@@ -74,6 +104,7 @@ function VehiclePanel() {
         <button className="btn btn-primary btn-block" onClick={s.start}>{t('action.start')}</button>
       )}
       {s.error && <p style={{ color: '#f0a29c', marginTop: 8 }}>{s.error}</p>}
+      <VehicleCode />
       <div className="conn">
         <span className={`dot ${connected ? 'live' : 'bad'}`} />
         {connected ? t('conn.ok') : t('conn.retry')}
@@ -87,6 +118,7 @@ function Shell() {
   const route = useRoute()
   const { potholes, incidents, connected, loaded } = useLive()
   const sensors = useSensors()
+  const citizen = useCitizen()
   const [reporting, setReporting] = useState(false)
   const [siteId, setSiteId] = useState(null)
   const Page = PAGES[route].el
@@ -130,7 +162,10 @@ function Shell() {
           })}
         </div>
         <VehiclePanel />
-        <a href="#/municipality" className="muni-link">{t('nav.municipal')}</a>
+        <div className="who">
+          <div className="who-name">{citizen?.guest ? t('user.guest') : citizen?.name}</div>
+          <button className="who-out" onClick={() => { signOut(); location.hash = '#/' }}>{t('user.signout')}</button>
+        </div>
       </nav>
 
       <div className="main">
@@ -177,7 +212,11 @@ function Root() {
     window.addEventListener('hashchange', on)
     return () => window.removeEventListener('hashchange', on)
   }, [])
-  return /^#\/municipality/.test(hash) ? <Municipal /> : <Shell />
+  const citizen = useCitizen()
+  if (/^#\/municipality/.test(hash)) return <Municipal />
+  // the citizen app needs a sign-in or "continue as guest" first; everything else is the home page
+  const atHome = hash === '' || hash === '#' || hash === '#/' || hash === '#/home'
+  return atHome || !citizen ? <Home /> : <Shell />
 }
 
 export default function App() {

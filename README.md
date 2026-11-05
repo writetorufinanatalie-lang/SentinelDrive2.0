@@ -32,23 +32,57 @@ Run `npm test` in `frontend/` to check that no sentence is missing in any langua
 
 Not built: logins and roles, a separate municipality area, a verifier step, notifications, analytics page. Anyone with the link can change a site's status.
 
+## Two apps, one home page
+
+Opening the site shows a home page with two doors:
+- **Citizen app:** sign in with a name plus phone or email, or continue as a guest. This is a demo sign-in: no password or code is checked, so anyone who knows your details could open your report list. The same details show the same "My reports" on any device. Real use needs a one-time code by SMS or email.
+- **Municipal dashboard:** staff sign-in at `/#/municipality` (see below). There is no staff link inside the citizen app.
+
+Both apps run from one server and share one database, so a citizen report appears in the staff queue at once.
+
 ## Municipal dashboard (staff only)
 
-Open `/#/municipality` (link "Municipal dashboard" in the citizen app). Citizens can only *report and follow* cases; only staff can change a case.
+Open `/#/municipality` or use the "Staff sign-in" card on the home page. Citizens can only *report and follow* cases; only staff can change a case.
 
 | Username | Role | Can do |
 |---|---|---|
 | `officer` | Municipal officer | acknowledge, assign team and target date, override priority (reason required), reject duplicates/false reports, reopen |
 | `repairteam` | Repair team | start repair, upload the "after" photo, mark completed |
-| `verifier` | Verifier / administrator | everything an officer can, plus accept or reject a finished repair |
+| `verifier` | Verifier / administrator | everything an officer can, plus accept or reject a finished repair, manage staff accounts and alert routes |
 
-The password is shared by all three. On Render it is generated for you: open the service, **Environment**, and read `SENTINEL_STAFF_PASSWORD`. Locally set `SENTINEL_STAFF_PASSWORD` yourself (if unset, a random one is printed in the server log).
+The first time the server starts it creates these three demo accounts, all with the password in `SENTINEL_STAFF_PASSWORD` (on Render: service > **Environment**; locally set it yourself; if unset a random one is printed in the server log). After that, a verifier opens **Teams and audit** and creates a real account for each person, resets passwords, or disables people. Changing a password or disabling an account signs that person out at once. Anyone can change their own password from the sidebar.
 
 Pages: Command centre (counts and priority queue), All cases (filters, search, CSV), Map, Analytics, Teams and audit.
 Workflow: reported, acknowledged, assigned, in progress, completed (after photo required), verified. A rejected repair reopens the case.
 Priority score = community reports 30%, safety context 30%, size 15%, time open 10% (rescaled). Duplicates are matched by location (8 m) plus photo similarity; if unsure the citizen is asked.
 
-Limits (be honest with judges): one shared staff password, no per-person accounts or city/ward jurisdictions, notifications are in-app only (no email/SMS), the municipal pages are English only, photo similarity is a simple heuristic, and on the free Render plan the database and photos are wiped on restart.
+### Alerts to the municipality
+
+With either channel set up, the municipality does not have to keep the dashboard open. Both are optional; set them as environment variables on the server:
+
+- **Email:** `SENTINEL_SMTP_HOST` (for Gmail `smtp.gmail.com`), `SENTINEL_SMTP_PORT` (587), `SENTINEL_SMTP_USER`, `SENTINEL_SMTP_PASSWORD` (a Gmail *app password*), optional `SENTINEL_SMTP_FROM`, and `SENTINEL_ALERT_EMAIL` (the default recipient).
+- **Webhook:** `SENTINEL_CASE_WEBHOOK` = a Slack, Discord, Teams or n8n incoming-webhook URL. No email account needed.
+
+Sent for: a new case, a rise to high or critical priority, an overdue case, a finished repair waiting for verification, and a rejected repair. In **Teams and audit** a verifier adds ward rules ("if the address contains *Adyar*, send to *adyar@city.gov*"), sends a test, and sees what was sent. Citizens who registered with an email also get an email when their case changes status. Nothing is sent until you set one of these; the page says so.
+
+## Security
+
+What is in place:
+- Passwords (staff and citizens) are stored only as salted PBKDF2-SHA256 hashes. Sign-in is locked for a while after 8 wrong attempts from one address. Sessions last 12 hours and die when the account is disabled or its password changes.
+- Every staff action checks the role on the server. A citizen's token can never act as staff.
+- A signed-in citizen's reports are tied to a random account id the server assigns. A guest cannot pose as an account, and "My reports" and notifications are only readable by their owner.
+- Public pages and the CSV never include reporter ids, internal notes or staff names.
+- Security headers on every response (content security policy, no framing, no sniffing, HSTS over https, no caching of API data), the API is not open to other websites, uploads and the live socket have size and rate limits, and the partner API (`/api/b2g/work-orders`) stays switched off until you set a private `SENTINEL_API_KEY`.
+- Faces and number-plate-like areas are blurred in the browser before a photo is uploaded; if the blur model cannot load, uploading is blocked.
+- Account changes and sign-ins are in the audit trail.
+
+What is not (say so if asked): no email or SMS verification of citizen accounts and no password reset by email, rate limits are per server process, photos are public to anyone who has their link, the blur is done on the device so a modified client could skip it, there is no formal privacy policy or legal review, and the free Render plan wipes data on restart (a paid plan with a disk and `SENTINEL_DATA_DIR` pointing at it fixes that).
+
+## Several vehicles at once
+
+Each vehicle has a **vehicle code** (shown under "This device" in the citizen app). A phone in the car and a screen watching it must use the same code (press "Change code" on the second device and type the first one's code). Different codes never see each other's driver, alertness check or siren. The emergency contact and driving side are still shared settings.
+
+Other limits: the municipal pages are English only, photo similarity for duplicates is a simple heuristic, and on the free Render plan the database and photos are wiped on restart.
 
 ## Run it
 
@@ -204,4 +238,4 @@ cd frontend && npm test
 - Sizes are camera estimates (see above). Night, rain glare and heavy shadow reduce detection quality.
 - Siren detection can be triggered by music with siren-like sweeps. It only gives advice; it never takes control.
 - Crash detection depends on the phone being firmly mounted. It is a driver aid, not a certified eCall system.
-- One vehicle per server in this MVP: the live driver state is shared by all connected screens.
+- Driver state is kept per vehicle code, but the emergency number and driving side are shared by everyone on the server.

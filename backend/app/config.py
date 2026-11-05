@@ -34,6 +34,20 @@ MIN_CONFIDENCE = float(os.getenv("SENTINEL_MIN_CONFIDENCE", "0.50"))
 # (officer, repairteam, verifier). If unset, a random one is generated and printed at start-up.
 STAFF_PASSWORD = os.getenv("SENTINEL_STAFF_PASSWORD", "")
 SECRET = os.getenv("SENTINEL_SECRET", "") or API_KEY
+# Reports one network address may send in 10 minutes (0 = no limit).
+UPLOAD_LIMIT = int(os.getenv("SENTINEL_UPLOAD_LIMIT", "40"))
+# Browser origins allowed to call the API from another site (comma separated). Empty = same site only.
+CORS_ORIGINS = [o.strip() for o in os.getenv("SENTINEL_CORS", "").split(",") if o.strip()]
+# Alerts to the municipality (all optional). Email needs an SMTP account (e.g. a Gmail app password);
+# the webhook works with Slack, Discord, Teams or n8n incoming-webhook URLs and needs no email account.
+SMTP_HOST = os.getenv("SENTINEL_SMTP_HOST", "")
+SMTP_PORT = int(os.getenv("SENTINEL_SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SENTINEL_SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SENTINEL_SMTP_PASSWORD", "")
+SMTP_FROM = os.getenv("SENTINEL_SMTP_FROM", "") or SMTP_USER
+ALERT_EMAIL = os.getenv("SENTINEL_ALERT_EMAIL", "")  # used when no ward rule matches
+CASE_WEBHOOK = os.getenv("SENTINEL_CASE_WEBHOOK", "")
+PUBLIC_URL = (os.getenv("SENTINEL_PUBLIC_URL", "") or os.getenv("RENDER_EXTERNAL_URL", "")).rstrip("/")
 # A case with no target date counts as overdue after this many days.
 OVERDUE_DAYS = float(os.getenv("SENTINEL_OVERDUE_DAYS", "7"))
 # Photo similarity at or above this merges a nearby report automatically; below it the citizen is asked.

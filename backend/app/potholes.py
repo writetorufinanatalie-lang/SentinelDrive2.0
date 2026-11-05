@@ -10,6 +10,7 @@ duplicate.
 import asyncio
 import copy
 import csv
+import hmac
 import io
 import json
 import re
@@ -19,12 +20,12 @@ from typing import List, Optional
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from . import auth, db, geocode, rates
-from .config import API_KEY, DEDUP_RADIUS_M, DUP_AUTO_SIMILARITY, MEDIA_DIR, OVERDUE_DAYS
+from . import auth, db, geocode, outbound, ratelimit, rates
+from .config import API_KEY, UPLOAD_LIMIT, DEDUP_RADIUS_M, DUP_AUTO_SIMILARITY, MEDIA_DIR, OVERDUE_DAYS
 from .gps import gps_from_exif
 from .hub import hub
 from .reports import verification_pdf, work_order_pdf
@@ -284,6 +285,7 @@ def staff_view(rec):
 def notify(to, code, case_id, **vars):
     """Queue an in-app notification. to = 'staff' or 'citizen:<reporter id>'."""
     db.put("notifications", {"id": "N-" + uuid.uuid4().hex[:10], "created_at": _ts(), "kind": to, "status": "unread", "code": code, "case": case_id, "vars": vars})
+    outbound.dispatch(to, code, case_id, vars)
 
 
 def notify_citizens(rec, code, **vars):
@@ -357,6 +359,7 @@ def detector_info():
 
 @router.post("/api/potholes/upload")
 async def upload(
+    request: Request,
     file: UploadFile = File(...),
     frames: List[UploadFile] = File(default=[]),
     lat: Optional[float] = Form(None),
@@ -367,8 +370,10 @@ async def upload(
     note: Optional[str] = Form(None),
     reporter: Optional[str] = Form(None),
     same_as: Optional[str] = Form(None),
+    authorization: Optional[str] = Header(None),
 ):
-    reporter = _clean_reporter(reporter)
+    ratelimit.hit(f"up:{auth.client_ip(request)}", UPLOAD_LIMIT, 600, "You are sending reports too fast. Please wait a few minutes.")
+    reporter = auth.reporter_id(authorization, reporter)
     data = await file.read()
     if not data:
         raise HTTPException(400, "The uploaded file is empty.")
@@ -444,7 +449,6 @@ async def upload(
             privacy = None
 
     now = _ts()
-    ev_extra = {"reporter": reporter}
     if existing:
         rec = existing
         before_cat = _derive(copy.deepcopy(rec))["priority_info"]["category"]
@@ -530,12 +534,12 @@ def _similarity_to_site(frame, site):
 
 
 @router.get("/api/potholes")
-def list_potholes(status: Optional[str] = None, limit: int = 500, reporter: Optional[str] = None):
+def list_potholes(status: Optional[str] = None, limit: int = 500, reporter: Optional[str] = None, authorization: Optional[str] = Header(None)):
     st = status.split(",") if status else None
     rows = db.query("potholes", status=st, limit=limit)
     if reporter is not None:
         # "My reports": only sites this device reported. Other citizens' ids are never returned.
-        rid = _clean_reporter(reporter)
+        rid = auth.reporter_id(authorization, reporter)
         rows = [r for r in rows if rid and rid in (r.get("reporters") or [])]
     return [public(r) for r in rows]
 
@@ -581,12 +585,12 @@ class LocationBody(BaseModel):
 
 
 @router.post("/api/potholes/{site_id}/location")
-async def set_location(site_id: str, body: LocationBody):
+async def set_location(site_id: str, body: LocationBody, authorization: Optional[str] = Header(None)):
     """A citizen can place their own report on the map, but only when it has no location yet."""
     rec = db.get("potholes", site_id)
     if not rec:
         raise HTTPException(404, "No pothole site with that ID.")
-    rid = _clean_reporter(body.reporter)
+    rid = auth.reporter_id(authorization, body.reporter)
     if not rid or rid not in (rec.get("reporters") or []):
         raise HTTPException(403, "Only the person who reported this pothole can set its location.")
     if rec.get("lat") is not None:
@@ -602,16 +606,16 @@ async def set_location(site_id: str, body: LocationBody):
 
 
 @router.get("/api/citizen/notifications")
-def citizen_notifications(reporter: str, limit: int = 50):
-    rid = _clean_reporter(reporter)
+def citizen_notifications(reporter: str = "", limit: int = 50, authorization: Optional[str] = Header(None)):
+    rid = auth.reporter_id(authorization, reporter)
     if not rid:
         return []
     return db.query("notifications", kind=f"citizen:{rid}", limit=limit)
 
 
 @router.post("/api/citizen/notifications/read")
-def citizen_notifications_read(reporter: str):
-    rid = _clean_reporter(reporter)
+def citizen_notifications_read(reporter: str = "", authorization: Optional[str] = Header(None)):
+    rid = auth.reporter_id(authorization, reporter)
     n = 0
     for x in db.query("notifications", kind=f"citizen:{rid}", status="unread", limit=500) if rid else []:
         x["status"] = "read"
@@ -679,7 +683,9 @@ def put_rate_card(values: dict, _user=Depends(auth.require("officer", "verifier"
 @router.get("/api/b2g/work-orders")
 def b2g_work_orders(x_api_key: Optional[str] = Header(None), authority: Optional[str] = None):
     """Open work orders for a civic body's own systems. Requires X-API-Key."""
-    if x_api_key != API_KEY:
+    if API_KEY == "change-me":
+        raise HTTPException(503, "This endpoint is switched off until SENTINEL_API_KEY is set to a private value.")
+    if not x_api_key or not hmac.compare_digest(x_api_key, API_KEY):
         raise HTTPException(401, "Missing or invalid X-API-Key header.")
     out = []
     for r in db.query("potholes", status=OPEN_STATUSES, limit=10000):

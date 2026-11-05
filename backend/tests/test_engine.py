@@ -74,8 +74,9 @@ def test_crash_verification(eng, msg, verified):
 
 def test_crash_escalates_without_response(eng):
     inc = eng.ingest({"type": "crash_candidate", "g": 9.0})[0]["incident"]
-    eng._pending_crashes[inc["id"]] = time.time() - 1
-    ev = eng.tick()
+    from app.engine import PENDING_CRASHES
+    PENDING_CRASHES[inc["id"]] = time.time() - 1
+    ev = eng.tick_crashes()
     assert ev[0]["incident"]["status"] == "escalated"
 
 

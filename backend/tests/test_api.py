@@ -25,7 +25,9 @@ def client(tmp_path, monkeypatch):
                  "detection_source": "yolo"}]
 
     monkeypatch.setattr(potholes.detector, "detect", fake_detect)
-    from app import auth
+    from app import accounts, auth, ratelimit
+    monkeypatch.setattr(accounts, "ITERATIONS", 1000)  # fast hashing for tests only
+    ratelimit.clear()
     monkeypatch.setattr(config, "STAFF_PASSWORD", "test-pass")
     monkeypatch.setattr(auth, "_password", None)
     from fastapi.testclient import TestClient
@@ -253,10 +255,15 @@ def test_rate_card_update_and_recalculate(client):
     assert client.put("/api/settings/rate-card", json={"gst_pct": -1}, headers=h).status_code == 400
 
 
-def test_b2g_requires_key(client):
+def test_b2g_requires_key(client, monkeypatch):
+    from app import potholes
     _upload(client)
+    # with the shipped default key the endpoint stays switched off
+    assert client.get("/api/b2g/work-orders", headers={"X-API-Key": "change-me"}).status_code == 503
+    monkeypatch.setattr(potholes, "API_KEY", "a-private-key")
     assert client.get("/api/b2g/work-orders").status_code == 401
-    rows = client.get("/api/b2g/work-orders", headers={"X-API-Key": "change-me"}).json()
+    assert client.get("/api/b2g/work-orders", headers={"X-API-Key": "wrong"}).status_code == 401
+    rows = client.get("/api/b2g/work-orders", headers={"X-API-Key": "a-private-key"}).json()
     assert len(rows) == 1 and rows[0]["work_order_pdf"].endswith(".pdf")
 
 
@@ -310,3 +317,162 @@ def test_old_status_names_are_migrated(client):
     potholes.migrate()
     new = db.get("potholes", sid)
     assert new["status"] == "assigned" and new["history"][0]["status"] == "acknowledged" and new["schema"] == 2
+
+
+# ---------------------------------------------------------------------------
+# accounts, passwords, limits, headers, alerts
+# ---------------------------------------------------------------------------
+
+def _login(c, u="verifier", p="test-pass"):
+    r = c.post("/api/auth/login", json={"username": u, "password": p})
+    return r, ({"Authorization": f"Bearer {r.json()['token']}"} if r.status_code == 200 else None)
+
+
+def test_staff_accounts_are_managed_and_revocable(client):
+    _, v = _login(client)
+    _, off = _login(client, "officer")
+    # only a verifier manages staff
+    assert client.get("/api/municipal/staff", headers=off).status_code == 403
+    assert len(client.get("/api/municipal/staff", headers=v).json()) == 3
+    # weak and duplicate accounts are refused; passwords are never returned
+    assert client.post("/api/municipal/staff", headers=v, json={"username": "asha", "role": "officer", "password": "123"}).status_code == 422
+    r = client.post("/api/municipal/staff", headers=v, json={"username": "Asha", "role": "officer", "password": "Strong-pass-1"})
+    assert r.status_code == 200 and "hash" not in r.text and r.json()["username"] == "asha"
+    assert client.post("/api/municipal/staff", headers=v, json={"username": "asha", "role": "officer", "password": "Strong-pass-1"}).status_code == 409
+    # the new person signs in with their own password, not the shared one
+    assert _login(client, "asha", "test-pass")[0].status_code == 401
+    _, asha = _login(client, "asha", "Strong-pass-1")
+    assert client.get("/api/municipal/cases", headers=asha).status_code == 200
+    # changing a password signs out the old token at once
+    r = client.post("/api/auth/password", headers=asha, json={"current": "Strong-pass-1", "new": "Another-pass-2"})
+    assert r.status_code == 200
+    assert client.get("/api/municipal/cases", headers=asha).status_code == 401
+    fresh = {"Authorization": f"Bearer {r.json()['token']}"}
+    assert client.get("/api/municipal/cases", headers=fresh).status_code == 200
+    assert client.post("/api/auth/password", headers=fresh, json={"current": "wrong", "new": "Third-pass-3"}).status_code == 403
+    # disabling an account kills its session; nobody can disable themselves or the last verifier
+    assert client.post("/api/municipal/staff/asha/active", headers=v, json={"active": False}).status_code == 200
+    assert client.get("/api/municipal/cases", headers=fresh).status_code == 401
+    assert _login(client, "asha", "Another-pass-2")[0].status_code == 401
+    assert client.post("/api/municipal/staff/verifier/active", headers=v, json={"active": False}).status_code == 409
+    # account changes are in the audit trail
+    notes = " ".join(e["note"] for e in client.get("/api/municipal/audit", headers=v).json() if e["case"] == "account")
+    assert "created staff account asha" in notes and "disabled staff account asha" in notes
+
+
+def test_passwords_are_stored_hashed(client):
+    from app import db
+    rec = db.get("staff", "officer")
+    assert "test-pass" not in str(rec) and len(rec["hash"]) == 64 and rec["salt"]
+
+
+def test_sign_in_is_locked_after_repeated_failures(client):
+    for _ in range(8):
+        assert _login(client, "officer", "nope")[0].status_code == 401
+    assert _login(client, "officer", "test-pass")[0].status_code == 429
+
+
+def test_citizen_accounts_and_private_reports(client):
+    reg = lambda n, c, p="Citizen-pass-1": client.post("/api/citizen/register", json={"name": n, "contact": c, "password": p})
+    assert reg("A", "a@x.com").status_code == 422          # name too short
+    assert reg("Anu", "not-a-contact").status_code == 422
+    assert reg("Anu", "a@x.com", "short").status_code == 422
+    r = reg("Anu", "A@X.com")
+    assert r.status_code == 200 and r.json()["user"]["id"].startswith("c-") and "hash" not in r.text
+    assert reg("Anu", "a@x.com").status_code == 409        # same contact, any capitalisation
+    assert client.post("/api/citizen/login", json={"contact": "a@x.com", "password": "bad-password"}).status_code == 401
+    anu = {"Authorization": f"Bearer {client.post('/api/citizen/login', json={'contact': 'a@x.com', 'password': 'Citizen-pass-1'}).json()['token']}"}
+    bob = {"Authorization": f"Bearer {reg('Bob', '+919876543210').json()['token']}"}
+
+    # a report filed while signed in belongs to the account; the browser's id is ignored
+    up = lambda h, **kw: client.post("/api/potholes/upload", headers=h, files={"file": ("r.jpg", _noisy(kw.get("seed", 1)), "image/jpeg")},
+                                     data={"lat": "13.0105", "lng": "80.2354", "reporter": "r-whatever"})
+    site = up(anu).json()["site"]
+    mine = client.get("/api/potholes?reporter=ignored", headers=anu).json()
+    assert [s["id"] for s in mine] == [site["id"]]
+    assert client.get("/api/potholes?reporter=ignored", headers=bob).json() == []
+    # a guest cannot pose as an account by sending its id
+    acct = client.get("/api/citizen/me", headers=anu).json()["id"]
+    assert client.get(f"/api/potholes?reporter={acct}").json() == []
+    assert client.get(f"/api/citizen/notifications?reporter={acct}").json() == []
+    assert client.get("/api/citizen/me").status_code == 401
+    # password change signs out the old token
+    r = client.post("/api/citizen/password", headers=anu, json={"current": "Citizen-pass-1", "new": "Citizen-pass-2"})
+    assert r.status_code == 200 and client.get("/api/citizen/me", headers=anu).status_code == 401
+
+
+def test_upload_flood_is_limited(client, monkeypatch):
+    from app import potholes, ratelimit
+    ratelimit.clear()
+    monkeypatch.setattr(potholes, "UPLOAD_LIMIT", 2)
+    assert _upload(client, reporter="r-a").status_code == 200
+    assert _upload(client, lat=13.2, reporter="r-a").status_code == 200
+    assert _upload(client, lat=13.3, reporter="r-a").status_code == 429
+
+
+def test_security_headers_and_no_open_cors(client):
+    r = client.get("/api/health", headers={"Origin": "https://evil.example"})
+    assert r.headers["x-content-type-options"] == "nosniff" and r.headers["x-frame-options"] == "DENY"
+    assert r.headers["cache-control"] == "no-store"
+    assert "access-control-allow-origin" not in r.headers
+    r = client.get("/", follow_redirects=True)
+    if r.status_code == 200:  # the built frontend is present
+        assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
+
+
+def test_websocket_rejects_foreign_origin_and_huge_messages(client):
+    from starlette.websockets import WebSocketDisconnect
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/ws", headers={"origin": "https://evil.example"}):
+            pass
+    with client.websocket_connect("/ws") as ws:
+        assert ws.receive_json()["type"] == "hello"
+        ws.send_text("x" * 40000)
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()
+
+
+def test_alerts_route_by_ward_and_email_citizens(client, monkeypatch):
+    from app import config, outbound
+    sent = []
+    monkeypatch.setattr(outbound, "_run", lambda f: f())
+    monkeypatch.setattr(outbound, "smtp_ready", lambda: True)
+    monkeypatch.setattr(outbound, "send_email", lambda to, s, b: (sent.append((to, s)) or (True, "")))
+    monkeypatch.setattr(config, "ALERT_EMAIL", "fallback@city.gov")
+    _, v = _login(client)
+    routes = client.put("/api/municipal/alerts/routes", headers=v, json={"routes": [{"match": "Adyar", "email": "adyar@city.gov"}, {"match": "x", "email": "bad"}]}).json()
+    assert routes == [{"match": "Adyar", "email": "adyar@city.gov"}]  # the row without a valid email is dropped
+    assert outbound.route_for({"address": {"display_name": "Lattice Bridge Rd, Adyar, Chennai"}}) == "adyar@city.gov"
+    assert outbound.route_for({"address": {"display_name": "Somewhere else"}}) == "fallback@city.gov"
+
+    # a signed-in citizen with an email gets status emails; staff get the new-case email
+    tok = client.post("/api/citizen/register", json={"name": "Anu", "contact": "anu@x.com", "password": "Citizen-pass-1"}).json()["token"]
+    h = {"Authorization": f"Bearer {tok}"}
+    sid = client.post("/api/potholes/upload", headers=h, files={"file": ("r.jpg", _noisy(3), "image/jpeg")}, data={"lat": "13.0", "lng": "80.2"}).json()["site"]["id"]
+    assert ("fallback@city.gov", f"New pothole case {sid}") in sent
+    _, off = _login(client, "officer")
+    client.post(f"/api/municipal/cases/{sid}/action", headers=off, json={"action": "acknowledge"})
+    assert ("anu@x.com", f"Your pothole report {sid}: update") in sent
+    log = client.get("/api/municipal/alerts", headers=v).json()
+    assert log["email_ready"] is True and log["routes"]
+
+
+def test_two_vehicles_do_not_share_driver_state(client):
+    def fatigue(ws):
+        ws.send_json({"type": "fatigue", "score": 3.0, "calibrated": True})
+
+    with client.websocket_connect("/ws?vehicle=CAR-AAAA") as a, client.websocket_connect("/ws?vehicle=CAR-BBBB") as b, \
+            client.websocket_connect("/ws?vehicle=carAAAA") as a_watcher:
+        for w in (a, b, a_watcher):
+            assert w.receive_json()["type"] == "hello"
+        fatigue(a)
+        got = a.receive_json()
+        assert got["type"] == "driver" and got["driver"]["score"] == 3.0
+        assert a_watcher.receive_json()["driver"]["score"] == 3.0  # same code (any case, dashes ignored): a paired screen sees it
+        fatigue(b)
+        assert b.receive_json()["driver"]["score"] == 3.0
+    # a new screen for the second car starts from its own state, not the first car's
+    with client.websocket_connect("/ws?vehicle=CAR-CCCC") as c:
+        hello = c.receive_json()
+        assert hello["vehicle"] == "CARCCCC"
+        assert hello["driver"] == {"active": False}

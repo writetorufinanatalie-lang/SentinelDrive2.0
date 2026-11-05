@@ -3,7 +3,7 @@ import { api } from '../../api'
 import { setSession } from '../../lib/auth'
 
 export default function Login() {
-  const [username, setUsername] = useState('officer')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -27,21 +27,17 @@ export default function Login() {
         <h2>Municipal sign-in</h2>
         <p className="muted small">For municipal officers, repair teams and verifiers. Citizens do not need to sign in.</p>
         <div className="field">
-          <label htmlFor="u">Role</label>
-          <select id="u" value={username} onChange={(e) => setUsername(e.target.value)}>
-            <option value="officer">Municipal officer</option>
-            <option value="repairteam">Repair team</option>
-            <option value="verifier">Verifier / administrator</option>
-          </select>
+          <label htmlFor="u">Username</label>
+          <input id="u" type="text" autoComplete="username" autoCapitalize="none" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
         </div>
         <div className="field">
           <label htmlFor="p">Password</label>
-          <input id="p" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
-          <span className="hint muted small">The password is set by whoever deployed the app (SENTINEL_STAFF_PASSWORD).</span>
+          <input id="p" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <span className="hint muted small">Each staff member has their own account. Ask your administrator (verifier) if you do not have one.</span>
         </div>
         {error && <div className="note error">{error}</div>}
-        <button className="btn btn-primary" disabled={busy || !password}>{busy ? 'Signing in…' : 'Sign in'}</button>
-        <a href="#/overview" className="muted small">Back to the citizen app</a>
+        <button className="btn btn-primary" disabled={busy || !password || !username.trim()}>{busy ? 'Signing in…' : 'Sign in'}</button>
+        <a href="#/" className="muted small">Back to the home page</a>
       </form>
     </div>
   )

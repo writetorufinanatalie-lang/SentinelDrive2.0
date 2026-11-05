@@ -1,3 +1,4 @@
+import { getVehicleCode } from '../lib/vehicle'
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 
@@ -65,7 +66,7 @@ export function LiveProvider({ children }) {
 
     const connect = () => {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-      const ws = new WebSocket(`${proto}://${location.host}/ws`)
+      const ws = new WebSocket(`${proto}://${location.host}/ws?vehicle=${encodeURIComponent(getVehicleCode())}`)
       wsRef.current = ws
       ws.onopen = () => {
         retry = 0

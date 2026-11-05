@@ -10,7 +10,7 @@ import cv2
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 
-from . import auth, db
+from . import accounts, auth, db, ratelimit
 from .config import MEDIA_DIR
 from .hub import hub
 from .potholes import (
@@ -33,14 +33,100 @@ class LoginBody(BaseModel):
     password: str
 
 
+def _audit(by, text):
+    """Account and sign-in events, kept apart from case history (last 500)."""
+    log = db.kv_get("security_audit", []) or []
+    log.append({"ts": _ts(), "by": by, "note": text})
+    db.kv_set("security_audit", log[-500:])
+
+
 @router.post("/api/auth/login")
 def login(body: LoginBody, request: Request):
-    return auth.login(body.username.strip().lower(), body.password, auth.client_ip(request))
+    ip = auth.client_ip(request)
+    u = body.username.strip().lower()
+    try:
+        out = auth.login(u, body.password, ip)
+    except HTTPException as e:
+        _audit(u[:32] or "?", f"failed sign-in ({e.status_code}) from {ip}")
+        raise
+    _audit(u, f"signed in from {ip}")
+    return out
 
 
 @router.get("/api/auth/me")
 def me(user=Depends(auth.current_user)):
     return user
+
+
+class PasswordBody(BaseModel):
+    current: str
+    new: str
+
+
+@router.post("/api/auth/password")
+def change_password(body: PasswordBody, request: Request, user=Depends(auth.current_user)):
+    ratelimit.hit(f"pw:{user['name']}", 8, 600)
+    rec = db.get("staff", user["name"])
+    if not accounts.check(body.current, rec):
+        raise HTTPException(403, "Your current password is wrong.")
+    accounts.set_staff_password(user["name"], body.new)
+    _audit(user["name"], "changed their own password")
+    return auth.login(user["name"], body.new, auth.client_ip(request))  # fresh token; the old one is now invalid
+
+
+# -- staff accounts (verifier / administrator only) ----------------------------
+
+
+class NewStaff(BaseModel):
+    username: str
+    role: str
+    password: str
+
+
+class PasswordReset(BaseModel):
+    password: str
+
+
+class ActiveBody(BaseModel):
+    active: bool
+
+
+@router.get("/api/municipal/staff")
+def list_staff(user=Depends(auth.require("verifier"))):
+    rows = db.query("staff", limit=500)
+    return [accounts.staff_public(r) for r in sorted(rows, key=lambda r: r["id"])]
+
+
+@router.post("/api/municipal/staff")
+def add_staff(body: NewStaff, user=Depends(auth.require("verifier"))):
+    rec = accounts.create_staff(body.username, body.role, body.password, by=user["name"])
+    _audit(user["name"], f"created staff account {rec['id']} ({rec['role']})")
+    return accounts.staff_public(rec)
+
+
+@router.post("/api/municipal/staff/{username}/password")
+def reset_staff_password(username: str, body: PasswordReset, user=Depends(auth.require("verifier"))):
+    accounts.set_staff_password(username.lower(), body.password)
+    _audit(user["name"], f"reset the password of {username.lower()}")
+    return {"ok": True}
+
+
+@router.post("/api/municipal/staff/{username}/active")
+def set_staff_active(username: str, body: ActiveBody, user=Depends(auth.require("verifier"))):
+    username = username.lower()
+    rec = db.get("staff", username)
+    if not rec:
+        raise HTTPException(404, "No such staff account.")
+    if username == user["name"]:
+        raise HTTPException(409, "You cannot disable your own account.")
+    if not body.active and rec["role"] == "verifier":
+        left = [r for r in db.query("staff", limit=500) if r["role"] == "verifier" and r["status"] == "active" and r["id"] != username]
+        if not left:
+            raise HTTPException(409, "At least one active verifier must remain.")
+    rec["status"] = "active" if body.active else "disabled"
+    db.put("staff", rec)
+    _audit(user["name"], f"{'enabled' if body.active else 'disabled'} staff account {username}")
+    return accounts.staff_public(rec)
 
 
 # -- helpers -----------------------------------------------------------------
@@ -340,6 +426,8 @@ def audit(limit: int = 300, _user=Depends(auth.require("verifier"))):
     for r in db.query("potholes", limit=100000):
         for h in r.get("history", []):
             out.append({"ts": h["ts"], "case": r["id"], "from": h.get("prev"), "to": h["status"], "by": h.get("by") or "citizen", "role": h.get("role") or "citizen", "note": h.get("note", ""), "internal": bool(h.get("internal"))})
+    for e in db.kv_get("security_audit", []) or []:
+        out.append({"ts": e["ts"], "case": "account", "from": None, "to": "account", "by": e["by"], "role": "staff", "note": e["note"], "internal": True})
     out.sort(key=lambda x: -x["ts"])
     return out[:limit]
 
@@ -411,3 +499,50 @@ def summary(_user=Depends(auth.current_user)):
             "by_area": dict(sorted(areas.items(), key=lambda kv: -kv[1])[:8]),
         },
     }
+
+
+# -- alerts to the municipality ---------------------------------------------------
+
+
+class RoutesBody(BaseModel):
+    routes: list
+
+
+@router.get("/api/municipal/alerts")
+def alerts_config(_user=Depends(auth.require("verifier"))):
+    from . import config, outbound
+    return {
+        "email_ready": outbound.smtp_ready(), "webhook_ready": bool(config.CASE_WEBHOOK),
+        "default_email": config.ALERT_EMAIL or None, "routes": outbound.get_routes(), "recent": outbound.recent(),
+    }
+
+
+@router.put("/api/municipal/alerts/routes")
+def alerts_routes(body: RoutesBody, user=Depends(auth.require("verifier"))):
+    from . import outbound
+    routes = outbound.set_routes([r for r in body.routes if isinstance(r, dict)])
+    _audit(user["name"], f"updated ward alert routes ({len(routes)})")
+    return routes
+
+
+class TestBody(BaseModel):
+    email: Optional[str] = None
+
+
+@router.post("/api/municipal/alerts/test")
+def alerts_test(body: TestBody, user=Depends(auth.require("verifier"))):
+    from . import config, outbound
+    ratelimit.hit(f"alerttest:{user['name']}", 6, 600)
+    result = {}
+    to = (body.email or config.ALERT_EMAIL or "").strip()
+    if to and "@" in to:
+        ok, err = outbound.send_email(to, "SentinelDrive test alert", "This is a test alert from the SentinelDrive municipal dashboard.")
+        outbound._log("email", to, "Test alert", ok, err)
+        result["email"] = {"ok": ok, "error": err}
+    else:
+        result["email"] = {"ok": False, "error": "Type an email address to send the test to."}
+    if config.CASE_WEBHOOK:
+        ok, err = outbound.send_webhook("SentinelDrive test alert")
+        outbound._log("webhook", "webhook", "Test alert", ok, err)
+        result["webhook"] = {"ok": ok, "error": err}
+    return result

@@ -1,6 +1,11 @@
-// A random id for this browser, so "My reports" and the unique-citizen count work without a login.
+// The id a report is filed under: the citizen's sign-in id, or for guests a random id kept in this browser.
+// Either way "My reports" and the unique-citizen count work.
+import { citizenReporterId } from './citizen'
+
 let memory = null
 export function getReporterId() {
+  const account = citizenReporterId()
+  if (account) return account
   try {
     let id = localStorage.getItem('sentinel.reporter')
     if (!id) {
